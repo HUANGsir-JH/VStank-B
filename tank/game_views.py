@@ -717,6 +717,16 @@ class GameView(arcade.View):
                         self.bullet_list.append(bullet)
                         if bullet.pymunk_body and bullet.pymunk_shape:
                             self.space.add(bullet.pymunk_body, bullet.pymunk_shape)
+                        # 网络模式下打印调试信息
+                        if self.mode in ["network_host", "network_client"]:
+                            print(f"🔫 主机端发射子弹: 位置({bullet.center_x:.1f}, {bullet.center_y:.1f}), 角度{bullet.angle:.1f}, 子弹总数: {len(self.bullet_list)}")
+                    else:
+                        # 射击失败的调试信息
+                        if self.mode in ["network_host", "network_client"]:
+                            print(f"🚫 主机端射击失败: 冷却时间未到 (当前时间: {self.total_time:.2f}, 上次射击: {self.player_tank.last_shot_time:.2f})")
+                else:
+                    if self.mode in ["network_host", "network_client"]:
+                        print("🚫 主机端射击失败: 坦克或物理体不存在")
 
         # 玩家2 (上下左右箭头) 控制 - Pymunk版
         if self.mode == "pvp" and self.player2_tank and self.player2_tank.pymunk_body:
