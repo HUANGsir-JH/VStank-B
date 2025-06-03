@@ -480,29 +480,57 @@ class HostGameView(arcade.View):
 
         # 假设客户端控制player2_tank
         tank = self.game_view.player2_tank
-        if not tank:
+        if not tank or not hasattr(tank, 'pymunk_body') or not tank.pymunk_body:
             return
 
-        # 处理按键
+        # 获取Pymunk body用于物理控制
+        body = tank.pymunk_body
+
+        # 导入必要的模块和常量
+        import math
+        from tank_sprites import PLAYER_MOVEMENT_SPEED, PLAYER_TURN_SPEED
+
+        # 计算Pymunk物理引擎的速度参数（与GameView中的逻辑保持一致）
+        PYMUNK_PLAYER_MAX_SPEED = PLAYER_MOVEMENT_SPEED * 60  # 增大移动速度倍率
+        PYMUNK_PLAYER_TURN_RAD_PER_SEC = math.radians(PLAYER_TURN_SPEED * 60 * 1.0)  # 增大旋转速度倍率
+
+        # 处理按键按下
         for key in keys_pressed:
             if key == "W":
-                tank.speed = tank.max_speed
+                # 前进 - 根据Pymunk body的当前角度计算速度向量
+                angle_rad = body.angle
+                vel_x = math.cos(angle_rad) * PYMUNK_PLAYER_MAX_SPEED
+                vel_y = math.sin(angle_rad) * PYMUNK_PLAYER_MAX_SPEED
+                body.velocity = (vel_x, vel_y)
             elif key == "S":
-                tank.speed = -tank.max_speed
+                # 后退 - 根据Pymunk body的当前角度计算反向速度向量
+                angle_rad = body.angle
+                vel_x = -math.cos(angle_rad) * PYMUNK_PLAYER_MAX_SPEED
+                vel_y = -math.sin(angle_rad) * PYMUNK_PLAYER_MAX_SPEED
+                body.velocity = (vel_x, vel_y)
             elif key == "A":
-                tank.angle_speed = tank.turn_speed_degrees
+                # 顺时针旋转 (Pymunk中负角速度是顺时针)
+                body.angular_velocity = PYMUNK_PLAYER_TURN_RAD_PER_SEC
             elif key == "D":
-                tank.angle_speed = -tank.turn_speed_degrees
+                # 逆时针旋转
+                body.angular_velocity = -PYMUNK_PLAYER_TURN_RAD_PER_SEC
             elif key == "SPACE":
-                # 射击
-                if hasattr(self.game_view, '_handle_tank_shooting'):
-                    self.game_view._handle_tank_shooting(tank)
+                # 射击 - 使用与GameView相同的射击逻辑
+                if hasattr(self.game_view, 'total_time'):
+                    bullet = tank.shoot(self.game_view.total_time)
+                    if bullet:  # 只有当shoot返回子弹时才添加
+                        self.game_view.bullet_list.append(bullet)
+                        if bullet.pymunk_body and bullet.pymunk_shape:
+                            self.game_view.space.add(bullet.pymunk_body, bullet.pymunk_shape)
 
+        # 处理按键释放
         for key in keys_released:
             if key in ["W", "S"]:
-                tank.speed = 0
+                # 停止移动
+                body.velocity = (0, 0)
             elif key in ["A", "D"]:
-                tank.angle_speed = 0
+                # 停止旋转
+                body.angular_velocity = 0
 
 
 class ClientGameView(arcade.View):
