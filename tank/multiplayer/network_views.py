@@ -429,7 +429,8 @@ class HostGameView(arcade.View):
                             "x": tank.center_x,
                             "y": tank.center_y,
                             "angle": tank.angle,
-                            "health": getattr(tank, 'health', 5)
+                            "health": getattr(tank, 'health', 5),
+                            "tank_image_file": getattr(tank, 'tank_image_file', None)  # 添加坦克图片文件信息
                         })
             except Exception as e:
                 print(f"获取坦克状态时出错: {e}")
@@ -837,8 +838,85 @@ class ClientGameView(arcade.View):
                             tank.angle = tank_data.get("angle", tank.angle)
                             if hasattr(tank, 'health'):
                                 tank.health = tank_data.get("health", tank.health)
+                            # 更新坦克图片文件信息（用于子弹颜色计算）
+                            if "tank_image_file" in tank_data and tank_data["tank_image_file"]:
+                                tank.tank_image_file = tank_data["tank_image_file"]
+                            # 更新玩家ID（用于子弹所有者匹配）
+                            if "player_id" in tank_data:
+                                tank.player_id = tank_data["player_id"]
             except Exception as e:
                 print(f"应用坦克状态时出错: {e}")
+
+        # 更新子弹状态 - 修复子弹同步问题
+        bullets_data = self.game_state.get("bullets", [])
+        if hasattr(self.game_view, 'bullet_list') and self.game_view.bullet_list is not None:
+            try:
+                # 清除现有子弹（避免重复和过期子弹）
+                # 注意：在网络客户端模式下，子弹状态完全由服务器控制
+                if hasattr(self.game_view, 'space') and self.game_view.space:
+                    # 从物理空间中移除旧子弹
+                    for bullet in self.game_view.bullet_list:
+                        if bullet and hasattr(bullet, 'pymunk_body') and bullet.pymunk_body:
+                            try:
+                                if bullet.pymunk_body in self.game_view.space.bodies:
+                                    self.game_view.space.remove(bullet.pymunk_body)
+                                if hasattr(bullet, 'pymunk_shape') and bullet.pymunk_shape:
+                                    if bullet.pymunk_shape in self.game_view.space.shapes:
+                                        self.game_view.space.remove(bullet.pymunk_shape)
+                            except Exception as e:
+                                print(f"移除旧子弹物理体时出错: {e}")
+
+                # 清空子弹列表
+                self.game_view.bullet_list.clear()
+
+                # 根据服务器数据创建新子弹
+                for bullet_data in bullets_data:
+                    try:
+                        from tank_sprites import Bullet
+
+                        bullet_x = bullet_data.get("x", 0)
+                        bullet_y = bullet_data.get("y", 0)
+                        bullet_angle = bullet_data.get("angle", 0)
+                        bullet_owner = bullet_data.get("owner", "unknown")
+
+                        # 根据子弹所有者确定正确的子弹颜色
+                        bullet_color = self._get_bullet_color_for_owner(bullet_owner)
+
+                        # 使用标准子弹半径（与tank_sprites.py保持一致）
+                        BULLET_RADIUS = 4
+
+                        # 创建子弹对象（客户端显示用，不需要完整的物理模拟）
+                        bullet = Bullet(
+                            radius=BULLET_RADIUS,  # 使用标准子弹半径
+                            owner=None,  # 客户端显示用，不需要owner引用
+                            tank_center_x=bullet_x,
+                            tank_center_y=bullet_y,
+                            actual_emission_angle_degrees=bullet_angle,
+                            speed_magnitude=0,  # 客户端不需要速度，位置由服务器控制
+                            color=bullet_color  # 根据所有者确定的颜色
+                        )
+
+                        # 设置子弹位置（覆盖构造函数中的物理计算）
+                        bullet.center_x = bullet_x
+                        bullet.center_y = bullet_y
+                        bullet.angle = bullet_angle
+
+                        # 添加到子弹列表
+                        self.game_view.bullet_list.append(bullet)
+
+                        # 将子弹添加到物理空间（用于渲染，但不参与物理模拟）
+                        if hasattr(self.game_view, 'space') and self.game_view.space:
+                            if bullet.pymunk_body and bullet.pymunk_shape:
+                                # 设置子弹为静态（不受物理影响）
+                                bullet.pymunk_body.velocity = (0, 0)
+                                bullet.pymunk_body.angular_velocity = 0
+                                self.game_view.space.add(bullet.pymunk_body, bullet.pymunk_shape)
+
+                    except Exception as e:
+                        print(f"创建客户端子弹时出错: {e}")
+
+            except Exception as e:
+                print(f"应用子弹状态时出错: {e}")
 
         # 更新分数
         scores = self.game_state.get("scores", {})
@@ -856,6 +934,39 @@ class ClientGameView(arcade.View):
                 self.game_view.round_over_timer = round_info["round_over_timer"]
             if hasattr(self.game_view, 'round_result_text') and "round_result_text" in round_info:
                 self.game_view.round_result_text = round_info["round_result_text"]
+
+    def _get_bullet_color_for_owner(self, owner_id: str):
+        """根据子弹所有者确定子弹颜色（与tank_sprites.py中的逻辑保持一致）"""
+        import arcade
+
+        # 默认颜色
+        bullet_color = arcade.color.YELLOW_ORANGE
+
+        # 根据所有者ID找到对应的坦克
+        if hasattr(self.game_view, 'player_list') and self.game_view.player_list is not None:
+            for tank in self.game_view.player_list:
+                if tank is not None and hasattr(tank, 'player_id'):
+                    if getattr(tank, 'player_id', None) == owner_id:
+                        # 找到对应的坦克，根据其图片文件确定颜色
+                        if hasattr(tank, 'tank_image_file') and tank.tank_image_file:
+                            path = tank.tank_image_file.lower()
+                            if 'green' in path:
+                                bullet_color = (0, 255, 0)  # 绿色
+                            elif 'desert' in path:
+                                bullet_color = (255, 165, 0)  # 沙漠色
+                            elif 'grey' in path:
+                                bullet_color = (128, 128, 128)  # 灰色
+                            elif 'blue' in path:
+                                bullet_color = (0, 0, 128)  # 蓝色
+                        break
+
+        # 如果没有找到对应坦克，根据owner_id使用默认颜色方案
+        if owner_id == "host":
+            bullet_color = (0, 255, 0)  # 主机默认绿色
+        elif owner_id.startswith("client"):
+            bullet_color = (0, 0, 128)  # 客户端默认蓝色
+
+        return bullet_color
 
     def _get_key_name(self, key) -> str:
         """将arcade按键转换为字符串"""
