@@ -31,6 +31,9 @@ class RoomBrowserView(arcade.View):
         self.refresh_timer = 0
         self.refresh_interval = 1.0  # 每秒刷新一次
 
+        # 防止重复初始化的标志
+        self.discovery_started = False
+
         # 预创建静态文本对象以提高性能
         self.title_text = arcade.Text(
             "房间浏览器",
@@ -67,14 +70,20 @@ class RoomBrowserView(arcade.View):
     def on_show_view(self):
         """显示视图时的初始化"""
         arcade.set_background_color(arcade.color.DARK_BLUE_GRAY)
-        
-        # 开始房间发现
-        self.room_discovery.start_discovery(self._on_rooms_updated)
-        print("开始搜索房间...")
+
+        # 防止重复启动房间发现
+        if not self.discovery_started:
+            self.discovery_started = True
+            self.room_discovery.start_discovery(self._on_rooms_updated)
+            print("开始搜索房间...")
+        else:
+            print("房间搜索已在运行中，跳过重复启动")
     
     def on_hide_view(self):
         """隐藏视图时的清理"""
         self.room_discovery.stop_discovery()
+        # 重置标志，允许下次重新启动
+        self.discovery_started = False
     
     def on_draw(self):
         """绘制界面"""
@@ -571,15 +580,17 @@ class ClientGameView(arcade.View):
 
     def on_update(self, _delta_time):
         """更新逻辑"""
-        # 检查是否需要返回房间浏览器
+        # 检查是否需要返回主菜单
         if self.should_return_to_browser:
             self.should_return_to_browser = False
             try:
-                browser_view = RoomBrowserView()
-                self.window.show_view(browser_view)
+                import game_views
+                mode_view = game_views.ModeSelectView()
+                self.window.show_view(mode_view)
+                print("已返回到主菜单（回退机制）")
                 return
             except Exception as e:
-                print(f"返回房间浏览器时出错: {e}")
+                print(f"返回主菜单时出错: {e}")
 
         # 检查是否需要初始化游戏视图（在主线程中安全执行）
         if self.should_initialize_game:
@@ -596,9 +607,10 @@ class ClientGameView(arcade.View):
     def on_key_press(self, key, _modifiers):
         """处理按键事件"""
         if key == arcade.key.ESCAPE:
-            # 返回房间浏览
-            browser_view = RoomBrowserView()
-            self.window.show_view(browser_view)
+            # 返回主菜单
+            import game_views
+            mode_view = game_views.ModeSelectView()
+            self.window.show_view(mode_view)
         else:
             # 发送按键到服务器
             key_name = self._get_key_name(key)
@@ -625,10 +637,18 @@ class ClientGameView(arcade.View):
         # 延迟视图切换，避免在网络线程中直接操作OpenGL
         # 使用arcade的调度器在主线程中执行视图切换
         try:
-            def switch_view():
+            def switch_view(delta_time):
+                """切换到主菜单视图
+
+                Args:
+                    delta_time: arcade.schedule() 传递的时间参数
+                """
                 if hasattr(self, 'window') and self.window:
-                    browser_view = RoomBrowserView()
-                    self.window.show_view(browser_view)
+                    # 直接返回到主菜单，避免房间浏览器的循环问题
+                    import game_views
+                    mode_view = game_views.ModeSelectView()
+                    self.window.show_view(mode_view)
+                    print("已返回到主菜单")
 
             # 在主线程中执行视图切换
             arcade.schedule(switch_view, 0.1)
