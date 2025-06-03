@@ -449,17 +449,27 @@ class HostGameView(arcade.View):
             except Exception as e:
                 print(f"获取子弹状态时出错: {e}")
 
-        # 提取分数
+        # 提取分数和游戏状态
         scores = {}
         if hasattr(self.game_view, 'player1_score'):
             scores["host"] = self.game_view.player1_score
         if hasattr(self.game_view, 'player2_score'):
             scores["client"] = self.game_view.player2_score
 
+        # 提取回合状态信息
+        round_info = {}
+        if hasattr(self.game_view, 'round_over'):
+            round_info["round_over"] = self.game_view.round_over
+        if hasattr(self.game_view, 'round_over_timer'):
+            round_info["round_over_timer"] = self.game_view.round_over_timer
+        if hasattr(self.game_view, 'round_result_text'):
+            round_info["round_result_text"] = self.game_view.round_result_text
+
         return {
             "tanks": tanks,
             "bullets": bullets,
-            "scores": scores
+            "scores": scores,
+            "round_info": round_info
         }
 
     def _apply_client_input(self, _client_id: str, keys_pressed: list, keys_released: list):
@@ -512,6 +522,10 @@ class ClientGameView(arcade.View):
         # 断开连接处理标志
         self.should_return_to_browser = False
 
+        # 视图切换保护标志 - 防止重复执行视图切换
+        self.is_switching_view = False
+        self.scheduled_switch_task = None
+
         # 游戏初始化标志 - 避免在网络线程中进行OpenGL操作
         self.should_initialize_game = False
 
@@ -556,6 +570,19 @@ class ClientGameView(arcade.View):
 
     def on_hide_view(self):
         """隐藏视图时的清理"""
+        # 清理调度任务
+        if self.scheduled_switch_task is not None:
+            try:
+                arcade.unschedule(self.scheduled_switch_task)
+                self.scheduled_switch_task = None
+            except Exception as e:
+                print(f"清理调度任务时出错: {e}")
+
+        # 重置状态标志
+        self.is_switching_view = False
+        self.should_return_to_browser = False
+
+        # 断开网络连接
         self.game_client.disconnect()
 
     def on_draw(self):
@@ -580,9 +607,10 @@ class ClientGameView(arcade.View):
 
     def on_update(self, _delta_time):
         """更新逻辑"""
-        # 检查是否需要返回主菜单
-        if self.should_return_to_browser:
+        # 检查是否需要返回主菜单（回退机制）
+        if self.should_return_to_browser and not self.is_switching_view:
             self.should_return_to_browser = False
+            self.is_switching_view = True
             try:
                 import game_views
                 mode_view = game_views.ModeSelectView()
@@ -591,6 +619,8 @@ class ClientGameView(arcade.View):
                 return
             except Exception as e:
                 print(f"返回主菜单时出错: {e}")
+            finally:
+                self.is_switching_view = False
 
         # 检查是否需要初始化游戏视图（在主线程中安全执行）
         if self.should_initialize_game:
@@ -607,10 +637,18 @@ class ClientGameView(arcade.View):
     def on_key_press(self, key, _modifiers):
         """处理按键事件"""
         if key == arcade.key.ESCAPE:
-            # 返回主菜单
-            import game_views
-            mode_view = game_views.ModeSelectView()
-            self.window.show_view(mode_view)
+            # 返回主菜单（带保护机制）
+            if not self.is_switching_view:
+                self.is_switching_view = True
+                try:
+                    import game_views
+                    mode_view = game_views.ModeSelectView()
+                    self.window.show_view(mode_view)
+                    print("用户按ESC返回主菜单")
+                except Exception as e:
+                    print(f"ESC返回主菜单时出错: {e}")
+                finally:
+                    self.is_switching_view = False
         else:
             # 发送按键到服务器
             key_name = self._get_key_name(key)
@@ -634,6 +672,21 @@ class ClientGameView(arcade.View):
         self.connected = False
         print(f"连接断开: {reason}")
 
+        # 防止重复执行视图切换
+        if self.is_switching_view:
+            print("视图切换已在进行中，忽略重复请求")
+            return
+
+        self.is_switching_view = True
+
+        # 取消之前的调度任务（如果存在）
+        if self.scheduled_switch_task is not None:
+            try:
+                arcade.unschedule(self.scheduled_switch_task)
+                self.scheduled_switch_task = None
+            except Exception as e:
+                print(f"取消之前的调度任务时出错: {e}")
+
         # 延迟视图切换，避免在网络线程中直接操作OpenGL
         # 使用arcade的调度器在主线程中执行视图切换
         try:
@@ -643,19 +696,37 @@ class ClientGameView(arcade.View):
                 Args:
                     delta_time: arcade.schedule() 传递的时间参数
                 """
-                if hasattr(self, 'window') and self.window:
-                    # 直接返回到主菜单，避免房间浏览器的循环问题
-                    import game_views
-                    mode_view = game_views.ModeSelectView()
-                    self.window.show_view(mode_view)
-                    print("已返回到主菜单")
+                try:
+                    if hasattr(self, 'window') and self.window and not self.window.invalid:
+                        # 直接返回到主菜单，避免房间浏览器的循环问题
+                        import game_views
+                        mode_view = game_views.ModeSelectView()
+                        self.window.show_view(mode_view)
+                        print("已返回到主菜单")
 
+                    # 清理调度任务
+                    if self.scheduled_switch_task is not None:
+                        arcade.unschedule(self.scheduled_switch_task)
+                        self.scheduled_switch_task = None
+
+                except Exception as e:
+                    print(f"执行视图切换时出错: {e}")
+                    # 如果切换失败，设置回退标志
+                    self.should_return_to_browser = True
+                finally:
+                    # 重置切换标志
+                    self.is_switching_view = False
+
+            # 保存调度任务引用
+            self.scheduled_switch_task = switch_view
             # 在主线程中执行视图切换
             arcade.schedule(switch_view, 0.1)
+
         except Exception as e:
-            print(f"切换视图时出错: {e}")
+            print(f"调度视图切换时出错: {e}")
             # 如果调度失败，设置一个标志让主循环处理
             self.should_return_to_browser = True
+            self.is_switching_view = False
 
     def _on_game_start(self, game_config: dict):
         """游戏开始回调"""
@@ -775,6 +846,16 @@ class ClientGameView(arcade.View):
             self.game_view.player1_score = scores["host"]
         if hasattr(self.game_view, 'player2_score') and "client" in scores:
             self.game_view.player2_score = scores["client"]
+
+        # 更新回合状态信息
+        round_info = self.game_state.get("round_info", {})
+        if round_info:
+            if hasattr(self.game_view, 'round_over') and "round_over" in round_info:
+                self.game_view.round_over = round_info["round_over"]
+            if hasattr(self.game_view, 'round_over_timer') and "round_over_timer" in round_info:
+                self.game_view.round_over_timer = round_info["round_over_timer"]
+            if hasattr(self.game_view, 'round_result_text') and "round_result_text" in round_info:
+                self.game_view.round_result_text = round_info["round_result_text"]
 
     def _get_key_name(self, key) -> str:
         """将arcade按键转换为字符串"""

@@ -214,12 +214,22 @@ class GameView(arcade.View):
                         self.round_over = True
                         self.round_over_timer = self.round_over_delay
                         if tank_sprite is self.player_tank:
-                            if self.mode == "pvp":
+                            if self.mode in ["pvp", "network_host", "network_client"]:
                                 self.player2_score += 1
-                                self.round_result_text = "玩家2 本回合胜利!"
-                        elif self.mode == "pvp" and tank_sprite is self.player2_tank:
+                                if self.mode == "pvp":
+                                    self.round_result_text = "玩家2 本回合胜利!"
+                                elif self.mode == "network_host":
+                                    self.round_result_text = "客户端 本回合胜利!"
+                                else:  # network_client
+                                    self.round_result_text = "主机 本回合胜利!"
+                        elif self.mode in ["pvp", "network_host", "network_client"] and tank_sprite is self.player2_tank:
                             self.player1_score += 1
-                            self.round_result_text = "玩家1 本回合胜利!"
+                            if self.mode == "pvp":
+                                self.round_result_text = "玩家1 本回合胜利!"
+                            elif self.mode == "network_host":
+                                self.round_result_text = "主机 本回合胜利!"
+                            else:  # network_client
+                                self.round_result_text = "客户端 本回合胜利!"
             return False # 子弹击中坦克后应该消失，不发生物理反弹
         return False # 如果是自己的子弹或坦克已死亡，忽略碰撞的物理效果
 
@@ -464,8 +474,8 @@ class GameView(arcade.View):
             self.draw_health_bar(70, p1_ui_y_bar, self.player_tank.health, self.player_tank.max_health)
         arcade.draw_text(f"胜场: {self.player1_score}", 200, p1_ui_y_bar + 7, ui_text_color, font_size=16, anchor_y="center") # 与血条对齐
 
-        # 玩家2 UI (仅PVP模式)
-        if self.mode == "pvp":
+        # 玩家2 UI (PVP模式和网络模式)
+        if self.mode in ["pvp", "network_host", "network_client"]:
             # P2 胜场 (最右侧)
             p2_wins_x = SCREEN_WIDTH - 10 # 调整P2胜场X坐标，更靠右
             arcade.draw_text(f"胜场: {self.player2_score}",
@@ -488,14 +498,14 @@ class GameView(arcade.View):
 
                 # P2 标识 (在血条的左边)
                 p2_label_margin = 10 # P2标识与血条的间距
-                # 假设 "P2" 标识宽度约30-40
-                # estimated_p2_label_width = 40
-                # p2_label_x = p2_health_bar_x - p2_label_margin - estimated_p2_label_width / 2 # 以中心点定位
-                # 为了简单，直接给一个固定X，然后调整
-                # arcade.draw_text("P2", p2_health_bar_x - p2_label_margin - 15 , p1_ui_y_text, ui_text_color, font_size=18, anchor_x="center", anchor_y="center")
-                # 更精确的定位：
+                # 网络模式下显示不同的标识
+                if self.mode in ["network_host", "network_client"]:
+                    p2_label = "客户端" if self.mode == "network_host" else "主机"
+                else:
+                    p2_label = "P2"
+
                 p2_text_x_for_label = p2_health_bar_x - p2_label_margin
-                arcade.draw_text("P2", p2_text_x_for_label, p1_ui_y_text, ui_text_color, font_size=18, anchor_x="right", anchor_y="center")
+                arcade.draw_text(p2_label, p2_text_x_for_label, p1_ui_y_text, ui_text_color, font_size=18, anchor_x="right", anchor_y="center")
 
         # 绘制回合结束提示
         if self.round_over and self.round_over_timer > 0 and self.round_result_text:
@@ -558,17 +568,33 @@ class GameView(arcade.View):
                 print(f"DEBUG: Round over timer ended. P1 Score: {self.player1_score}, P2 Score: {self.player2_score}, Max Score: {self.max_score}")
                 if self.player1_score >= self.max_score:
                     print("DEBUG: Player 1 wins the game! Showing GameOverView.")
+                    # 根据模式显示不同的胜利信息
+                    if self.mode == "pvp":
+                        winner_text = "玩家1 最终胜利!"
+                    elif self.mode == "network_host":
+                        winner_text = "主机 最终胜利!"
+                    else:  # network_client
+                        winner_text = "客户端 最终胜利!"
+
                     game_over_view = GameOverView(
-                        f"玩家1 最终胜利!",
+                        winner_text,
                         self.mode,
                         self.player1_tank_image,
                         self.player2_tank_image
                     )
                     self.window.show_view(game_over_view)
-                elif self.mode == "pvp" and self.player2_score >= self.max_score:
+                elif self.mode in ["pvp", "network_host", "network_client"] and self.player2_score >= self.max_score:
                     print("DEBUG: Player 2 wins the game! Showing GameOverView.")
+                    # 根据模式显示不同的胜利信息
+                    if self.mode == "pvp":
+                        winner_text = "玩家2 最终胜利!"
+                    elif self.mode == "network_host":
+                        winner_text = "客户端 最终胜利!"
+                    else:  # network_client
+                        winner_text = "主机 最终胜利!"
+
                     game_over_view = GameOverView(
-                        f"玩家2 最终胜利!",
+                        winner_text,
                         self.mode,
                         self.player1_tank_image,
                         self.player2_tank_image
@@ -765,6 +791,10 @@ class GameOverView(arcade.View):
                 from tank_selection import TankSelectionView
                 tank_selection_view = TankSelectionView()
                 self.window.show_view(tank_selection_view)
+            elif self.last_mode in ["network_host", "network_client"]:
+                # 网络模式返回主菜单
+                mode_view = ModeSelectView()
+                self.window.show_view(mode_view)
             else:
                 # 其他模式直接重新开始
                 game_view = GameView(
