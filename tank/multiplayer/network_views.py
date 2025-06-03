@@ -10,6 +10,10 @@ from .game_host import GameHost
 from .game_client import GameClient
 from .room_discovery import RoomDiscovery, RoomInfo
 from .messages import MessageFactory
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from fps_config import get_fps_config, NetworkSyncOptimizer
 
 
 # 文本绘制优化说明：
@@ -227,6 +231,9 @@ class HostGameView(arcade.View):
         # 坦克选择信息
         self.tank_selections = {}
 
+        # 网络同步优化器
+        self.sync_optimizer = None
+
         # 预创建静态文本对象
         self.waiting_text = arcade.Text(
             "等待玩家加入...",
@@ -317,19 +324,21 @@ class HostGameView(arcade.View):
         if self.game_phase == "playing" and self.game_view:
             self.game_view.on_update(delta_time)
 
-            # 降低游戏状态同步频率，避免子弹状态被过于频繁地清除重建
-            # 使用计时器控制同步频率
-            if not hasattr(self, '_last_sync_time'):
-                self._last_sync_time = 0
+            # 使用优化的网络同步机制
+            if self.sync_optimizer is None:
+                fps_config = get_fps_config()
+                self.sync_optimizer = NetworkSyncOptimizer(fps_config)
 
             current_time = getattr(self.game_view, 'total_time', 0)
-            sync_interval = 1.0 / 30.0  # 30 FPS同步频率，而不是60 FPS
 
-            if current_time - self._last_sync_time >= sync_interval:
-                self._last_sync_time = current_time
-                # 发送游戏状态给客户端
-                game_state = self._get_game_state()
-                self.game_host.send_game_state(game_state)
+            # 检查是否应该进行网络同步
+            if self.sync_optimizer.should_sync(current_time):
+                # 获取并优化游戏状态
+                raw_game_state = self._get_game_state()
+                optimized_state = self.sync_optimizer.optimize_sync_data(raw_game_state)
+
+                # 发送优化后的游戏状态给客户端
+                self.game_host.send_game_state(optimized_state)
     
     def on_key_press(self, key, _modifiers):
         """处理按键事件"""

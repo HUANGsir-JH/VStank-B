@@ -4,6 +4,7 @@ import pymunk
 import os # 添加os模块导入
 from tank_sprites import (Tank, PLAYER_IMAGE_PATH_GREEN, PLAYER_IMAGE_PATH_DESERT,PLAYER_IMAGE_PATH_BLUE, PLAYER_IMAGE_PATH_GREY, PLAYER_MOVEMENT_SPEED, PLAYER_TURN_SPEED, COLLISION_TYPE_BULLET, COLLISION_TYPE_WALL, COLLISION_TYPE_TANK)
 from maps import get_random_map_layout # <--- 修改导入路径
+from fps_config import get_fps_config
 
 # 获取 game_views.py 文件所在的目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -607,8 +608,10 @@ class GameView(arcade.View):
 
         # 更新物理空间
         # 启用小步长更新，提高物理模拟精度，减少穿模
-        # 限制最大步长，防止在帧率过低时物理模拟不稳定
-        delta_time = min(delta_time, 1.0 / 60.0) # 限制最大步长为1/60秒，确保至少60FPS的物理更新
+        # 使用统一的FPS配置限制最大步长，防止在帧率过低时物理模拟不稳定
+        fps_config = get_fps_config()
+        max_delta = fps_config.get_physics_delta_limit()
+        delta_time = min(delta_time, max_delta) # 使用配置的物理更新频率
         self.space.step(delta_time) # 进行一次物理更新
 
 
