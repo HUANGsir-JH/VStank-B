@@ -162,8 +162,8 @@ class RoomAdvertiser:
         self.max_players = 4
         self.game_mode = "pvp"
     
-    def start_advertising(self, room_name: str, current_players: int = 1, 
-                         max_players: int = 4, game_mode: str = "pvp"):
+    def start_advertising(self, room_name: str, current_players: int = 1,
+                         max_players: int = 2, game_mode: str = "dual_pvp"):
         """开始广播房间"""
         if self.running:
             return

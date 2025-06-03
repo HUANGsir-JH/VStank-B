@@ -169,6 +169,11 @@ class MessageFactory:
         }
         return UDPMessage(MessageType.TANK_SELECTION_CONFLICT, data, player_id)
 
+    @staticmethod
+    def create_tank_selection_sync_request() -> UDPMessage:
+        """创建坦克选择状态同步请求消息"""
+        return UDPMessage(MessageType.TANK_SELECTION_SYNC, {"request": True})
+
 
 # 示例消息格式（用于文档和测试）
 EXAMPLE_MESSAGES = {

@@ -9,8 +9,8 @@ import threading
 import math
 from typing import Dict, Optional, List
 from .udp_discovery import RoomDiscovery, RoomInfo
-from .udp_host import GameHost
-from .udp_client import GameClient
+from .dual_player_host import DualPlayerHost
+from .dual_player_client import DualPlayerClient
 
 
 class RoomBrowserView(arcade.View):
@@ -268,7 +268,7 @@ class NetworkHostView(arcade.View):
 
     def __init__(self):
         super().__init__()
-        self.game_host = GameHost()
+        self.game_host = DualPlayerHost()
         self.connected_players: List[str] = ["host"]  # 包括主机自己
         self.game_started = False
 
@@ -541,7 +541,7 @@ class NetworkClientView(arcade.View):
 
     def __init__(self):
         super().__init__()
-        self.game_client = GameClient()
+        self.game_client = DualPlayerClient()
         self.game_state = {}
         self.connected = False
 
