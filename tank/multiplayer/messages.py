@@ -25,6 +25,7 @@ class MessageType(Enum):
     GAME_END = "game_end"                  # 游戏结束
     GAME_STATE = "game_state"              # 游戏状态同步
     PLAYER_INPUT = "player_input"          # 玩家输入
+    MAP_SYNC = "map_sync"                  # 地图同步
     
     # 坦克选择
     TANK_SELECTION_START = "tank_selection_start"    # 开始坦克选择
@@ -116,6 +117,16 @@ class MessageFactory:
         """创建游戏开始消息"""
         data = game_config or {}
         return NetworkMessage(MessageType.GAME_START, data)
+
+    @staticmethod
+    def create_map_sync(map_layout: list, map_checksum: str = None) -> NetworkMessage:
+        """创建地图同步消息"""
+        data = {
+            "map_layout": map_layout,
+            "map_checksum": map_checksum,
+            "wall_count": len(map_layout)
+        }
+        return NetworkMessage(MessageType.MAP_SYNC, data)
     
     @staticmethod
     def create_game_state(tanks: list, bullets: list, scores: Dict[str, int] = None) -> NetworkMessage:

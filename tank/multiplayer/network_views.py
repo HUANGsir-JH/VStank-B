@@ -360,23 +360,47 @@ class HostGameView(arcade.View):
     def _start_game(self):
         """开始游戏"""
         import game_views
+        from .map_sync import MapSyncManager
 
         # 创建游戏视图
         self.game_view = game_views.GameView(mode="network_host")
 
-        # 重要：调用setup方法初始化游戏元素，包括player_list
+        # 重要：先获取地图布局，再调用setup
+        map_layout = self.game_view.get_map_layout()
+
+        # 验证地图数据
+        if not MapSyncManager.validate_map_layout(map_layout):
+            print("❌ 地图数据无效，使用默认地图")
+            from maps import MAP_1_WALLS
+            map_layout = MAP_1_WALLS
+            self.game_view.set_map_layout(map_layout)
+
+        # 序列化地图数据
+        try:
+            map_data = MapSyncManager.serialize_map_data(map_layout)
+            print(f"✅ 地图数据已序列化: {map_data['wall_count']} 个墙壁, 校验和: {map_data['checksum'][:8]}...")
+        except Exception as e:
+            print(f"❌ 地图序列化失败: {e}")
+            return
+
+        # 调用setup方法初始化游戏元素
         self.game_view.setup()
 
         self.game_phase = "playing"
 
         print("游戏开始！")
 
-        # 获取地图布局并发送给客户端
-        map_layout = self.game_view.get_map_layout()
+        # 发送地图同步消息给客户端
+        map_sync_msg = MessageFactory.create_map_sync(
+            map_layout=map_layout,
+            map_checksum=map_data['checksum']
+        )
+        self.game_host.send_to_client(map_sync_msg)
 
-        # 通知客户端游戏开始，包含地图布局
+        # 通知客户端游戏开始
         start_msg = MessageFactory.create_game_start({
-            "map_layout": map_layout
+            "map_layout": map_layout,
+            "map_checksum": map_data['checksum']
         })
         self.game_host.send_to_client(start_msg)
 
@@ -484,6 +508,8 @@ class ClientGameView(arcade.View):
 
         # 地图布局（从主机接收）
         self.received_map_layout = None
+        self.received_map_checksum = None
+        self.map_sync_verified = False
 
         # 预创建静态文本对象
         self.connecting_text = arcade.Text(
@@ -509,7 +535,8 @@ class ClientGameView(arcade.View):
             connection=self._on_connected,
             disconnection=self._on_disconnected,
             game_state=self._on_game_state_update,
-            game_start=self._on_game_start
+            game_start=self._on_game_start,
+            map_sync=self._on_map_sync
         )
 
         return self.game_client.connect_to_host(host_ip, host_port, player_name)
@@ -616,8 +643,7 @@ class ClientGameView(arcade.View):
 
         # 保存地图布局
         if "map_layout" in game_config:
-            self.received_map_layout = game_config["map_layout"]
-            print(f"收到地图布局: {len(self.received_map_layout)} 个墙壁")
+            self._process_received_map(game_config["map_layout"], game_config.get("map_checksum"))
 
         # 设置标志在主线程中初始化游戏视图
         if self.game_phase == "waiting":
@@ -627,22 +653,80 @@ class ClientGameView(arcade.View):
         """游戏状态更新回调"""
         self.game_state = state
 
+    def _process_received_map(self, map_layout: list, map_checksum: str = None):
+        """处理接收到的地图数据"""
+        from .map_sync import MapSyncManager
+
+        try:
+            # 验证地图数据
+            if not MapSyncManager.validate_map_layout(map_layout):
+                print("❌ 接收到的地图数据无效")
+                return
+
+            # 验证校验和（如果提供）
+            if map_checksum:
+                actual_checksum = MapSyncManager.calculate_map_checksum(map_layout)
+                if actual_checksum != map_checksum:
+                    print(f"❌ 地图校验和不匹配: 期望 {map_checksum[:8]}..., 实际 {actual_checksum[:8]}...")
+                    return
+                else:
+                    print(f"✅ 地图校验和验证通过: {actual_checksum[:8]}...")
+                    self.map_sync_verified = True
+
+            # 保存地图数据
+            self.received_map_layout = map_layout
+            self.received_map_checksum = map_checksum
+
+            # 获取地图信息
+            map_info = MapSyncManager.get_map_info(map_layout)
+            print(f"✅ 地图数据已接收: {map_info['wall_count']} 个墙壁")
+
+        except Exception as e:
+            print(f"❌ 处理地图数据时出错: {e}")
+
+    def _on_map_sync(self, map_data: dict):
+        """处理地图同步消息"""
+        print("收到地图同步消息")
+
+        if "map_layout" in map_data:
+            self._process_received_map(
+                map_data["map_layout"],
+                map_data.get("map_checksum")
+            )
+
     def _initialize_game_view(self):
         """初始化游戏视图"""
         import game_views
+        from .map_sync import MapSyncManager
+
+        # 检查是否已接收到地图数据
+        if not self.received_map_layout:
+            print("❌ 尚未接收到地图数据，无法初始化游戏")
+            return
+
+        # 再次验证地图数据
+        if not MapSyncManager.validate_map_layout(self.received_map_layout):
+            print("❌ 地图数据验证失败，无法初始化游戏")
+            return
 
         self.game_view = game_views.GameView(mode="network_client")
 
-        # 如果收到了地图布局，设置固定地图
-        if self.received_map_layout:
-            self.game_view.set_map_layout(self.received_map_layout)
-            print(f"应用接收到的地图布局: {len(self.received_map_layout)} 个墙壁")
+        # 设置固定地图
+        self.game_view.set_map_layout(self.received_map_layout)
+
+        # 验证地图是否正确设置
+        current_map = self.game_view.get_map_layout()
+        if MapSyncManager.compare_maps(current_map, self.received_map_layout):
+            print(f"✅ 地图同步成功: {len(self.received_map_layout)} 个墙壁")
+        else:
+            print("❌ 地图同步失败，地图数据不匹配")
+            return
 
         # 重要：调用setup方法初始化游戏元素，包括player_list
         self.game_view.setup()
 
         self.game_phase = "playing"
-        print("游戏开始！")
+        print("🎮 客户端游戏开始！")
 
     def _apply_server_state(self):
         """应用服务器状态到本地游戏视图"""
