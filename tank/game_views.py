@@ -125,6 +125,9 @@ class GameView(arcade.View):
         self.round_over_delay = 2.0 # 回合结束后等待2秒开始下一回合或结束游戏
         self.max_score = 2 # 获胜需要的胜场数
         self.round_result_text = "" # 用于显示回合结束提示
+
+        # 网络游戏相关
+        self.fixed_map_layout = None  # 用于网络游戏的固定地图布局
         # self.enemy_list = None # TODO: 之后添加敌人
         # self.powerup_list = None # TODO: 之后添加道具
 
@@ -247,6 +250,9 @@ class GameView(arcade.View):
         # 如果坦克不存在，创建新的
         if not self.player_tank:
             self.player_tank = Tank(self.player1_tank_image, NEW_PLAYER_SCALE, p1_start_x, p1_start_y)
+            # 设置玩家ID（用于网络游戏）
+            if self.mode in ["network_host", "network_client"]:
+                self.player_tank.player_id = "host"
             self.player_list.append(self.player_tank)
             # 添加到Pymunk空间
             if self.player_tank.pymunk_body and self.player_tank.pymunk_shape:
@@ -263,8 +269,8 @@ class GameView(arcade.View):
             # 同步Arcade Sprite
             self.player_tank.sync_with_pymunk_body()
 
-          # 重置/创建 玩家2 坦克 (仅PVP)
-        if self.mode == "pvp":
+          # 重置/创建 玩家2 坦克 (PVP和网络模式)
+        if self.mode in ["pvp", "network_host", "network_client"]:
             p2_start_x = SCREEN_WIDTH - (WALL_THICKNESS * 3)
             p2_start_y = GAME_AREA_BOTTOM_Y + GAME_AREA_HEIGHT / 2
 
@@ -277,7 +283,16 @@ class GameView(arcade.View):
 
             # 如果坦克不存在，创建新的
             if not self.player2_tank:
-                self.player2_tank = Tank(self.player2_tank_image, NEW_PLAYER_SCALE, p2_start_x, p2_start_y)
+                # 网络模式下客户端使用蓝色坦克
+                if self.mode in ["network_host", "network_client"]:
+                    tank_image = PLAYER_IMAGE_PATH_BLUE
+                else:
+                    tank_image = self.player2_tank_image
+
+                self.player2_tank = Tank(tank_image, NEW_PLAYER_SCALE, p2_start_x, p2_start_y)
+                # 设置玩家ID（用于网络游戏）
+                if self.mode in ["network_host", "network_client"]:
+                    self.player2_tank.player_id = "client"
                 self.player_list.append(self.player2_tank)
                 # 添加到Pymunk空间
                 if self.player2_tank.pymunk_body and self.player2_tank.pymunk_shape:
@@ -361,8 +376,13 @@ class GameView(arcade.View):
             wall.center_y = y_coord + current_wall_thickness / 2
             self.wall_list.append(wall)
 
-        # --- 创建随机选择的内部地图墙壁 ---
-        selected_map_layout = get_random_map_layout()
+        # --- 创建内部地图墙壁 ---
+        # 网络游戏使用固定地图，单机游戏使用随机地图
+        if self.fixed_map_layout is not None:
+            selected_map_layout = self.fixed_map_layout
+        else:
+            selected_map_layout = get_random_map_layout()
+
         for cx, cy, w, h in selected_map_layout:
             # 创建 Arcade Sprite
             wall_sprite = arcade.SpriteSolidColor(int(w), int(h), wall_color)
@@ -395,6 +415,20 @@ class GameView(arcade.View):
 
         arcade.set_background_color(arcade.color.LIGHT_GRAY)
         self.start_new_round() # 初始化第一回合
+
+    def set_map_layout(self, map_layout):
+        """设置固定地图布局（用于网络游戏同步）"""
+        self.fixed_map_layout = map_layout
+
+    def get_map_layout(self):
+        """获取当前地图布局"""
+        if self.fixed_map_layout is not None:
+            return self.fixed_map_layout
+        else:
+            # 如果是主机，生成并保存地图布局
+            from maps import get_random_map_layout
+            self.fixed_map_layout = get_random_map_layout()
+            return self.fixed_map_layout
 
     def on_show_view(self):
         self.setup()
