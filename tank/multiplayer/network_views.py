@@ -346,9 +346,11 @@ class NetworkHostView(arcade.View):
             self.window.show_view(browser_view)
 
         elif key == arcade.key.SPACE and self.game_phase == "waiting":
-            # 开始坦克选择阶段
-            if len(self.connected_players) >= 1:
+            # 开始坦克选择阶段（双人模式需要2个玩家）
+            if len(self.connected_players) >= 2:
                 self._start_tank_selection()
+            else:
+                print(f"需要2个玩家才能开始游戏，当前只有{len(self.connected_players)}个玩家")
 
         elif self.game_phase == "tank_selection":
             # 坦克选择阶段的按键处理
@@ -363,14 +365,18 @@ class NetworkHostView(arcade.View):
         if self.game_started and self.game_view:
             self.game_view.on_update(delta_time)
 
-            # 广播游戏状态
+            # 发送游戏状态给客户端（双人模式）
             game_state = self._get_game_state()
-            self.game_host.broadcast_game_state(game_state)
+            self.game_host.send_game_state(game_state)
 
     def _on_client_join(self, client_id: str, player_name: str):
         """客户端加入回调"""
         self.connected_players.append(f"{player_name} ({client_id})")
         print(f"玩家加入: {player_name}")
+
+        # 双人模式下，有客户端加入后可以自动开始游戏
+        if len(self.connected_players) >= 2 and self.game_phase == "waiting":
+            print("双人房间已满，可以开始游戏")
 
     def _on_client_leave(self, client_id: str, reason: str):
         """客户端离开回调"""
@@ -378,6 +384,10 @@ class NetworkHostView(arcade.View):
         self.connected_players = [p for p in self.connected_players
                                 if not p.endswith(f"({client_id})")]
         print(f"玩家离开: {client_id} ({reason})")
+
+        # 如果游戏进行中客户端离开，可能需要暂停游戏
+        if self.game_started:
+            print("客户端离开，游戏可能需要暂停")
 
     def _on_input_received(self, client_id: str, keys_pressed: List[str], keys_released: List[str]):
         """输入接收回调"""
@@ -663,7 +673,31 @@ class NetworkClientView(arcade.View):
     def _on_connected(self, player_id: str):
         """连接成功回调"""
         self.connected = True
+        # 连接成功后应该进入坦克选择阶段，而不是直接进入游戏
+        self.game_phase = "tank_selection"
         print(f"已连接，玩家ID: {player_id}")
+
+        # 切换到坦克选择视图
+        self._switch_to_tank_selection()
+
+    def _switch_to_tank_selection(self):
+        """切换到坦克选择视图（客户端）"""
+        try:
+            from .network_tank_selection import NetworkTankSelectionView
+            tank_selection_view = NetworkTankSelectionView(
+                is_host=False,
+                room_name="客户端房间",  # 客户端不需要房间名
+                game_client=self.game_client
+            )
+
+            # 切换到坦克选择视图
+            self.window.show_view(tank_selection_view)
+            print("客户端已切换到坦克选择视图")
+
+        except Exception as e:
+            print(f"切换到坦克选择视图失败: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _on_disconnected(self, reason: str):
         """断开连接回调 - 线程安全"""
@@ -675,6 +709,10 @@ class NetworkClientView(arcade.View):
         """游戏状态更新回调 - 线程安全"""
         # 将游戏状态更新放入队列，在主线程中处理
         self.pending_updates.append(game_state.copy())
+
+        # 如果还没有切换到游戏阶段，现在切换
+        if self.game_phase == "connecting":
+            self.game_phase = "playing"
 
     def _initialize_game_view(self):
         """初始化完整的游戏视图"""

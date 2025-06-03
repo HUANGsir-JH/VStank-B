@@ -105,12 +105,19 @@ class NetworkTankSelectionView(arcade.View):
             self.my_player_id = "host"
             # 主机默认选择第一个坦克
             self._select_tank("green", broadcast=False)
+
+            # 双人模式：如果主机已经有客户端连接，添加到连接列表
+            if self.game_host and self.game_host.get_client_id():
+                client_id = self.game_host.get_client_id()
+                self.connected_players.add(client_id)
+                print(f"坦克选择：检测到已连接的客户端 {client_id}")
         else:
             # 客户端获取自己的玩家ID
             if self.game_client:
                 self.my_player_id = self.game_client.get_player_id()
                 if self.my_player_id:
                     self.connected_players.add(self.my_player_id)
+                    print(f"坦克选择：客户端 {self.my_player_id} 已连接")
 
     def on_show_view(self):
         """显示视图时的设置"""
@@ -409,7 +416,7 @@ class NetworkTankSelectionView(arcade.View):
     # === 网络通信方法 ===
 
     def _broadcast_tank_selection_sync(self):
-        """主机广播坦克选择状态同步"""
+        """主机发送坦克选择状态同步（双人模式）"""
         if not self.is_host or not self.game_host:
             return
 
@@ -417,8 +424,8 @@ class NetworkTankSelectionView(arcade.View):
             self.selected_tanks, list(self.ready_players)
         )
 
-        # 通过主机广播给所有客户端
-        self.game_host.broadcast_message(message)
+        # 双人模式：发送给单个客户端
+        self.game_host.send_to_client(message)
 
     def _send_tank_selection_ready(self, tank_type: str, tank_image_path: str):
         """客户端发送准备完成消息"""
@@ -432,14 +439,17 @@ class NetworkTankSelectionView(arcade.View):
         self.game_client.send_message(message)
 
     def _check_all_players_ready(self):
-        """检查是否所有玩家都已准备完成"""
+        """检查是否所有玩家都已准备完成（双人模式）"""
         if not self.is_host:
             return
 
-        # 检查所有连接的玩家是否都已准备
-        if len(self.ready_players) >= len(self.connected_players):
-            print("所有玩家已准备完成，开始游戏！")
+        # 双人模式：需要2个玩家都准备好（主机+客户端）
+        expected_players = 2
+        if len(self.ready_players) >= expected_players:
+            print(f"双人游戏所有玩家已准备完成（{len(self.ready_players)}/{expected_players}），开始游戏！")
             self._start_game()
+        else:
+            print(f"等待玩家准备：{len(self.ready_players)}/{expected_players}")
 
     def _start_game(self):
         """开始游戏"""
@@ -457,18 +467,14 @@ class NetworkTankSelectionView(arcade.View):
         host_view.game_host = self.game_host  # 传递现有的game_host实例
         host_view.tank_selections = tank_selections  # 传递坦克选择信息
         host_view.game_phase = "playing"  # 直接设置为playing阶段
-        
-        # 正确传递所有网络回调
-        if self.game_host:
-            host_view.set_callbacks(
-                client_join=self._on_client_join,
-                client_leave=self._on_client_leave,
-                input_received=self._on_input_received,
-                game_state=self._get_game_state
-            )
-        
+
+        # 双人模式：直接启动游戏，不需要额外的回调设置
+        # 因为game_host已经有了必要的回调
+
         host_view.start_game_directly()  # 开始游戏
-        host_view.on_show_view()  # 显式调用on_show_view
+
+        # 切换到游戏视图
+        self.window.show_view(host_view)
 
     # === 网络回调处理方法 ===
 
@@ -483,11 +489,11 @@ class NetworkTankSelectionView(arcade.View):
 
             # 检查坦克是否已被选择
             if self._is_tank_taken_by_others(tank_type, client_id):
-                # 发送冲突消息
+                # 发送冲突消息（双人模式）
                 conflict_msg = MessageFactory.create_tank_selection_conflict(
                     client_id, tank_type, "坦克已被其他玩家选择"
                 )
-                self.game_host.send_to_client(client_id, conflict_msg)
+                self.game_host.send_to_client(conflict_msg)
                 return
 
             # 更新客户端的坦克选择
@@ -508,7 +514,7 @@ class NetworkTankSelectionView(arcade.View):
                 conflict_msg = MessageFactory.create_tank_selection_conflict(
                     client_id, tank_type, "坦克已被其他玩家选择"
                 )
-                self.game_host.send_to_client(client_id, conflict_msg)
+                self.game_host.send_to_client(conflict_msg)
                 return
 
             # 确认客户端的坦克选择和准备状态
