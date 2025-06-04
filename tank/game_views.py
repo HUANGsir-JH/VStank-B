@@ -519,7 +519,8 @@ class GameView(arcade.View):
                 p2_label_margin = 10 # P2标识与血条的间距
                 # 网络模式下显示不同的标识
                 if self.mode in ["network_host", "network_client"]:
-                    p2_label = "客户端" if self.mode == "network_host" else "主机"
+                    # p2_label = "客户端" if self.mode == "network_host" else "主机"
+                    p2_label = "客户端"
                 else:
                     p2_label = "P2"
 

@@ -561,15 +561,114 @@ class HostGameView(arcade.View):
                     except Exception as e:
                         print(f"主机端移除过期子弹时出错: {e}")
 
-                # 更新现有子弹位置（主机端的子弹位置由物理引擎控制，但需要确保同步）
+                # 创建新子弹（主机端也需要处理客户端发射的子弹）
+                for bullet_id, bullet_data in server_bullets.items():
+                    if bullet_id not in current_bullets:
+                        # 创建客户端发射的子弹在主机端显示
+                        bullet_x = bullet_data.get("x", 0)
+                        bullet_y = bullet_data.get("y", 0)
+                        bullet_angle = bullet_data.get("angle", 0)
+                        bullet_owner = bullet_data.get("owner", "unknown")
+
+                        # 只为客户端发射的子弹创建显示对象
+                        if bullet_owner != "host":
+                            try:
+                                from tank_sprites import Bullet
+
+                                # 根据子弹所有者确定正确的子弹颜色
+                                bullet_color = self._get_bullet_color_for_owner(bullet_owner)
+
+                                # 使用标准子弹半径
+                                BULLET_RADIUS = 4
+
+                                # 创建子弹对象（主机端显示客户端子弹用）
+                                bullet = Bullet(
+                                    radius=BULLET_RADIUS,
+                                    owner=None,  # 主机端显示用，不需要owner引用
+                                    tank_center_x=bullet_x,
+                                    tank_center_y=bullet_y,
+                                    actual_emission_angle_degrees=bullet_angle,
+                                    speed_magnitude=bullet_data.get("speed", 16),
+                                    color=bullet_color
+                                )
+
+                                # 设置子弹ID用于跟踪
+                                bullet.bullet_id = bullet_id
+
+                                # 设置子弹位置
+                                bullet.center_x = bullet_x
+                                bullet.center_y = bullet_y
+                                bullet.angle = bullet_angle
+
+                                # 添加到子弹列表
+                                self.game_view.bullet_list.append(bullet)
+
+                                # 将子弹添加到物理空间
+                                if hasattr(self.game_view, 'space') and self.game_view.space:
+                                    if bullet.pymunk_body and bullet.pymunk_shape:
+                                        bullet.pymunk_body.position = (bullet_x, bullet_y)
+                                        self.game_view.space.add(bullet.pymunk_body, bullet.pymunk_shape)
+
+                                print(f"🔫 主机端创建客户端子弹: 位置({bullet_x:.1f}, {bullet_y:.1f}), 角度{bullet_angle:.1f}")
+
+                            except Exception as e:
+                                print(f"主机端创建客户端子弹时出错: {e}")
+
+                # 更新现有子弹位置（主要是客户端子弹的位置同步）
                 for bullet_id, bullet_data in server_bullets.items():
                     if bullet_id in current_bullets:
-                        # 主机端的子弹位置由物理引擎控制，不需要强制同步位置
-                        # 但需要确保子弹对象存在于列表中
-                        pass
+                        bullet = current_bullets[bullet_id]
+                        bullet_owner = bullet_data.get("owner", "unknown")
+
+                        # 只同步客户端子弹的位置，主机端子弹由物理引擎控制
+                        if bullet_owner != "host":
+                            bullet_x = bullet_data.get("x", bullet.center_x)
+                            bullet_y = bullet_data.get("y", bullet.center_y)
+                            bullet_angle = bullet_data.get("angle", bullet.angle)
+
+                            bullet.center_x = bullet_x
+                            bullet.center_y = bullet_y
+                            bullet.angle = bullet_angle
+
+                            # 同步到物理体
+                            if bullet.pymunk_body:
+                                bullet.pymunk_body.position = (bullet_x, bullet_y)
 
             except Exception as e:
                 print(f"主机端应用子弹状态时出错: {e}")
+
+    def _get_bullet_color_for_owner(self, owner_id: str):
+        """根据子弹所有者确定子弹颜色（与tank_sprites.py中的逻辑保持一致）"""
+        import arcade
+
+        # 默认颜色
+        bullet_color = arcade.color.YELLOW_ORANGE
+
+        # 根据所有者ID找到对应的坦克
+        if hasattr(self.game_view, 'player_list') and self.game_view.player_list is not None:
+            for tank in self.game_view.player_list:
+                if tank is not None and hasattr(tank, 'player_id'):
+                    if getattr(tank, 'player_id', None) == owner_id:
+                        # 找到对应的坦克，根据其图片文件确定颜色
+                        if hasattr(tank, 'tank_image_file') and tank.tank_image_file:
+                            path = tank.tank_image_file.lower()
+                            if 'green' in path:
+                                bullet_color = (0, 255, 0)  # 绿色
+                            elif 'desert' in path:
+                                bullet_color = (255, 165, 0)  # 沙漠色
+                            elif 'grey' in path:
+                                bullet_color = (128, 128, 128)  # 灰色
+                            elif 'blue' in path:
+                                bullet_color = (0, 0, 128)  # 蓝色
+                        break
+
+        # 如果没有找到对应坦克，根据owner_id使用默认颜色方案
+        if owner_id == "host":
+            bullet_color = (0, 255, 0)  # 主机默认绿色
+        elif owner_id.startswith("client"):
+            bullet_color = (0, 0, 128)  # 客户端默认蓝色
+
+        return bullet_color
 
     def _apply_client_input(self, _client_id: str, keys_pressed: list, keys_released: list):
         """应用客户端输入到游戏中"""
@@ -1065,9 +1164,22 @@ class ClientGameView(arcade.View):
                         bullet.center_x = bullet_x
                         bullet.center_y = bullet_y
                         bullet.angle = bullet_angle
-                        # 同步到物理体
+
+                        # 同步到物理体并设置正确的速度
                         if bullet.pymunk_body:
-                            bullet.pymunk_body.position = (bullet.center_x, bullet.center_y)
+                            bullet.pymunk_body.position = (bullet_x, bullet_y)
+
+                            # 修复：为客户端子弹设置正确的物理速度，避免卡顿
+                            import math
+                            speed = bullet_data.get("speed", 16)
+                            pymunk_speed = speed * 60  # 转换为Pymunk速度
+                            angle_rad = math.radians(bullet_angle)
+
+                            # 计算速度向量（与tank_sprites.py中的逻辑保持一致）
+                            vx = -pymunk_speed * math.sin(angle_rad)
+                            vy = pymunk_speed * math.cos(angle_rad)
+                            bullet.pymunk_body.velocity = (vx, vy)
+
                     else:
                         # 创建新子弹
                         try:
@@ -1104,9 +1216,24 @@ class ClientGameView(arcade.View):
                             # 将子弹添加到物理空间（保持物理属性以支持碰撞检测）
                             if hasattr(self.game_view, 'space') and self.game_view.space:
                                 if bullet.pymunk_body and bullet.pymunk_shape:
-                                    # 客户端子弹位置由服务器控制，但保留物理属性
+                                    # 设置子弹位置
                                     bullet.pymunk_body.position = (bullet_x, bullet_y)
+
+                                    # 修复：为新创建的客户端子弹设置正确的物理速度
+                                    import math
+                                    speed = bullet_data.get("speed", 16)
+                                    pymunk_speed = speed * 60  # 转换为Pymunk速度
+                                    angle_rad = math.radians(bullet_angle)
+
+                                    # 计算速度向量（与tank_sprites.py中的逻辑保持一致）
+                                    vx = -pymunk_speed * math.sin(angle_rad)
+                                    vy = pymunk_speed * math.cos(angle_rad)
+                                    bullet.pymunk_body.velocity = (vx, vy)
+
+                                    # 添加到物理空间
                                     self.game_view.space.add(bullet.pymunk_body, bullet.pymunk_shape)
+
+                                    print(f"🔫 客户端创建子弹: 位置({bullet_x:.1f}, {bullet_y:.1f}), 角度{bullet_angle:.1f}, 速度({vx:.1f}, {vy:.1f})")
 
                         except Exception as e:
                             print(f"创建客户端子弹时出错: {e}")
