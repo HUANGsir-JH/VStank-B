@@ -129,6 +129,7 @@ class GameView(arcade.View):
 
         # 网络游戏相关
         self.fixed_map_layout = None  # 用于网络游戏的固定地图布局
+        self.network_callback = None  # 网络回调函数（用于发送游戏结束消息）
         # self.enemy_list = None # TODO: 之后添加敌人
         # self.powerup_list = None # TODO: 之后添加道具
 
@@ -146,6 +147,23 @@ class GameView(arcade.View):
         self.total_time = 0.0
 
         self._setup_collision_handlers()
+
+    def set_network_callback(self, callback):
+        """设置网络回调函数"""
+        self.network_callback = callback
+
+    def _send_game_end_message(self, winner, winner_text):
+        """发送游戏结束消息"""
+        if self.network_callback:
+            final_scores = {
+                "player1": self.player1_score,
+                "player2": self.player2_score
+            }
+            self.network_callback("game_end", {
+                "winner": winner,
+                "winner_text": winner_text,
+                "final_scores": final_scores
+            })
 
     def _setup_collision_handlers(self):
         """设置Pymunk碰撞处理器"""
@@ -577,6 +595,10 @@ class GameView(arcade.View):
                     else:  # network_client
                         winner_text = "客户端 最终胜利!"
 
+                    # 网络模式下发送游戏结束消息
+                    if self.mode == "network_host" and hasattr(self, 'network_callback'):
+                        self._send_game_end_message("player1", winner_text)
+
                     game_over_view = GameOverView(
                         winner_text,
                         self.mode,
@@ -593,6 +615,10 @@ class GameView(arcade.View):
                         winner_text = "客户端 最终胜利!"
                     else:  # network_client
                         winner_text = "主机 最终胜利!"
+
+                    # 网络模式下发送游戏结束消息
+                    if self.mode == "network_host" and hasattr(self, 'network_callback'):
+                        self._send_game_end_message("player2", winner_text)
 
                     game_over_view = GameOverView(
                         winner_text,

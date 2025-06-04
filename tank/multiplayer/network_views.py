@@ -397,6 +397,9 @@ class HostGameView(arcade.View):
         # 创建游戏视图
         self.game_view = game_views.GameView(mode="network_host")
 
+        # 设置网络回调
+        self.game_view.set_network_callback(self._on_game_event)
+
         # 重要：先获取地图布局，再调用setup
         map_layout = self.game_view.get_map_layout()
 
@@ -435,6 +438,19 @@ class HostGameView(arcade.View):
             "map_checksum": map_data['checksum']
         })
         self.game_host.send_to_client(start_msg)
+
+    def _on_game_event(self, event_type: str, event_data: dict):
+        """处理游戏事件"""
+        if event_type == "game_end":
+            # 发送游戏结束消息给客户端
+            from .messages import MessageFactory
+            game_end_msg = MessageFactory.create_game_end(
+                winner=event_data.get("winner"),
+                final_scores=event_data.get("final_scores"),
+                winner_text=event_data.get("winner_text")
+            )
+            self.game_host.send_to_client(game_end_msg)
+            print(f"主机端发送游戏结束消息: {event_data.get('winner_text')}")
 
     def _get_game_state(self) -> Dict[str, Any]:
         """获取当前游戏状态"""
@@ -647,6 +663,10 @@ class ClientGameView(arcade.View):
         # 游戏初始化标志 - 避免在网络线程中进行OpenGL操作
         self.should_initialize_game = False
 
+        # 游戏结束标志 - 避免在网络线程中进行OpenGL操作
+        self.should_show_game_over = False
+        self.game_end_data = None
+
         # 地图布局（从主机接收）
         self.received_map_layout = None
         self.received_map_checksum = None
@@ -677,6 +697,7 @@ class ClientGameView(arcade.View):
             disconnection=self._on_disconnected,
             game_state=self._on_game_state_update,
             game_start=self._on_game_start,
+            game_end=self._on_game_end,
             map_sync=self._on_map_sync
         )
 
@@ -747,6 +768,14 @@ class ClientGameView(arcade.View):
                 self._initialize_game_view()
             except Exception as e:
                 print(f"初始化游戏视图时出错: {e}")
+
+        # 检查是否需要显示游戏结束界面（在主线程中安全执行）
+        if self.should_show_game_over:
+            self.should_show_game_over = False
+            try:
+                self._show_game_over_view()
+            except Exception as e:
+                print(f"显示游戏结束界面时出错: {e}")
 
         if self.game_phase == "playing" and self.game_view:
             # 应用服务器状态到本地游戏视图
@@ -861,6 +890,34 @@ class ClientGameView(arcade.View):
     def _on_game_state_update(self, state: dict):
         """游戏状态更新回调"""
         self.game_state = state
+
+    def _on_game_end(self, game_end_data: dict):
+        """游戏结束回调"""
+        print(f"客户端收到游戏结束消息: {game_end_data.get('winner_text')}")
+
+        # 设置标志在主线程中显示游戏结束界面
+        self.should_show_game_over = True
+        self.game_end_data = game_end_data
+
+    def _show_game_over_view(self):
+        """显示游戏结束界面"""
+        if not self.game_end_data:
+            return
+
+        import game_views
+
+        # 创建游戏结束视图
+        winner_text = self.game_end_data.get("winner_text", "游戏结束")
+        game_over_view = game_views.GameOverView(
+            winner_text,
+            "network_client",
+            # 使用默认坦克图片
+            game_views.PLAYER_IMAGE_PATH_GREEN,
+            game_views.PLAYER_IMAGE_PATH_BLUE
+        )
+
+        print(f"客户端显示游戏结束界面: {winner_text}")
+        self.window.show_view(game_over_view)
 
     def _process_received_map(self, map_layout: list, map_checksum: str = None):
         """处理接收到的地图数据"""

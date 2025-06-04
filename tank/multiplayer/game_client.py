@@ -38,6 +38,7 @@ class GameClient:
         self.disconnection_callback: Optional[Callable[[str], None]] = None
         self.game_state_callback: Optional[Callable[[dict], None]] = None
         self.game_start_callback: Optional[Callable[[dict], None]] = None
+        self.game_end_callback: Optional[Callable[[dict], None]] = None
         self.tank_selection_callback: Optional[Callable] = None
         self.map_sync_callback: Optional[Callable[[dict], None]] = None
         
@@ -46,13 +47,14 @@ class GameClient:
         self.heartbeat_interval = 5.0  # 5秒发送一次心跳
     
     def set_callbacks(self, connection: Callable = None, disconnection: Callable = None,
-                     game_state: Callable = None, game_start: Callable = None, tank_selection: Callable = None,
-                     map_sync: Callable = None):
+                     game_state: Callable = None, game_start: Callable = None, game_end: Callable = None,
+                     tank_selection: Callable = None, map_sync: Callable = None):
         """设置回调函数"""
         self.connection_callback = connection
         self.disconnection_callback = disconnection
         self.game_state_callback = game_state
         self.game_start_callback = game_start
+        self.game_end_callback = game_end
         self.tank_selection_callback = tank_selection
         self.map_sync_callback = map_sync
     
@@ -281,6 +283,8 @@ class GameClient:
                 self._handle_tank_selection_start(message)
             elif message.type == MessageType.TANK_SELECTION_SYNC:
                 self._handle_tank_selection_sync(message)
+            elif message.type == MessageType.GAME_END:
+                self._handle_game_end(message)
 
         except Exception as e:
             # 检查是否是OpenGL错误
@@ -330,6 +334,18 @@ class GameClient:
         """处理坦克选择同步"""
         if self.tank_selection_callback:
             self.tank_selection_callback("sync", message.data)
+
+    def _handle_game_end(self, message: NetworkMessage):
+        """处理游戏结束消息"""
+        if self.game_end_callback:
+            try:
+                self.game_end_callback(message.data)
+            except Exception as e:
+                # 检查是否是OpenGL错误
+                if "OpenGL" in str(e) or "1282" in str(e) or "Invalid operation" in str(e):
+                    print(f"游戏结束回调中的OpenGL错误（线程安全问题）: {e}")
+                else:
+                    print(f"游戏结束回调失败: {e}")
 
     def _handle_map_sync(self, message: NetworkMessage):
         """处理地图同步消息"""

@@ -119,6 +119,17 @@ class MessageFactory:
         return NetworkMessage(MessageType.GAME_START, data)
 
     @staticmethod
+    def create_game_end(winner: str, final_scores: Dict[str, int] = None, winner_text: str = None) -> NetworkMessage:
+        """创建游戏结束消息"""
+        data = {
+            "winner": winner,
+            "final_scores": final_scores or {},
+            "winner_text": winner_text,
+            "timestamp": time.time()
+        }
+        return NetworkMessage(MessageType.GAME_END, data)
+
+    @staticmethod
     def create_map_sync(map_layout: list, map_checksum: str = None) -> NetworkMessage:
         """创建地图同步消息"""
         data = {
