@@ -201,6 +201,9 @@ class Tank(arcade.Sprite):
 # --- 子弹类 ---
 class Bullet(arcade.SpriteCircle):
     """ 子弹类 """
+    # 类级别的子弹ID计数器
+    _bullet_id_counter = 0
+
     def __init__(self, radius, owner, tank_center_x, tank_center_y, actual_emission_angle_degrees, speed_magnitude, color):
         super().__init__(radius, color)
         self.radius = radius
@@ -212,6 +215,13 @@ class Bullet(arcade.SpriteCircle):
         self.angle = actual_emission_angle_degrees
         self.bounce_count = 0
         self.max_bounces = 3
+
+        # 为子弹分配唯一ID以支持网络同步
+        Bullet._bullet_id_counter += 1
+        self.bullet_id = Bullet._bullet_id_counter
+
+        # 保存速度信息用于网络同步
+        self.speed_magnitude = speed_magnitude
 
         self.pymunk_body = None
         self.pymunk_shape = None
